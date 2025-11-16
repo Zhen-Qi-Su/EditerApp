@@ -15,7 +15,7 @@ export default function Login() {
 
     const handleEnter = async () => {
         if (!inputText.trim()) {
-            Alert.alert('請輸入暱稱');
+            Alert.alert('請輸入名字');
             return;
         }
 
