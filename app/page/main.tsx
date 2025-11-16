@@ -1,19 +1,22 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState, useRef } from "react";
-import { Alert, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import {
+  Alert, FlatList, Modal, StyleSheet, Text, TextInput,
+  TouchableOpacity, View
+} from "react-native";
 import Layout from "../components/node/layout";
 
 interface Project {
   id: number;
   name: string;
-  editingName: string;
 }
 
 export default function Main() {
   const [nickname, setNickname] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-
   const [projects, setProjects] = useState<Project[]>([]);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
   const flatListRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -23,46 +26,34 @@ export default function Main() {
       .finally(() => setLoading(false));
   }, []);
 
-  // 新增專案方格
-  const handleAddProject = () => {
+  // 打開新增專案 Modal
+  const handleOpenModal = () => {
+    setNewProjectName('');
+    setModalVisible(true);
+  };
+
+  // 儲存並新增專案
+  const handleSaveNewProject = () => {
+    if (!newProjectName.trim()) {
+      Alert.alert("請輸入專案名稱");
+      return;
+    }
+
     const newProject: Project = {
       id: projects.length + 1,
-      name: '',
-      editingName: '',
+      name: newProjectName.trim(),
     };
     setProjects(prev => [...prev, newProject]);
+    setModalVisible(false);
+
+    // 自動滾動到底
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
   };
 
   // 清空專案列表
-  const handleClearProjects = () => {
-    setProjects([]);
-  };
-
-  // 更新專案輸入文字
-  const handleChangeText = (id: number, text: string) => {
-    setProjects(prev =>
-      prev.map(p => p.id === id ? { ...p, editingName: text } : p)
-    );
-  };
-
-  // 儲存專案名稱
-  const handleSaveProjectName = (id: number) => {
-    setProjects(prev =>
-      prev.map(p => {
-        if (p.id === id) {
-          if (!p.editingName.trim()) {
-            Alert.alert("請輸入專案名稱");
-            return p;
-          }
-          return { ...p, name: p.editingName };
-        }
-        return p;
-      })
-    );
-  };
+  const handleClearProjects = () => setProjects([]);
 
   if (loading) {
     return (
@@ -76,7 +67,7 @@ export default function Main() {
     <Layout>
       {/* 頂部標題 + 按鈕 */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.addButton} onPress={handleAddProject}>
+        <TouchableOpacity style={styles.addButton} onPress={handleOpenModal}>
           <Text style={styles.addButtonText}>新增</Text>
         </TouchableOpacity>
 
@@ -95,29 +86,41 @@ export default function Main() {
         contentContainerStyle={styles.projectList}
         renderItem={({ item }) => (
           <View style={styles.projectBox}>
-            <View style={styles.inputRow}>
-              <Text style={styles.inputLabel}>專案名稱:</Text>
-              <TextInput
-                style={styles.projectInput}
-                placeholder="請輸入專案名稱"
-                value={item.editingName}
-                onChangeText={(text) => handleChangeText(item.id, text)}
-              />
+            <View style={styles.displayRow}>
+              <Text style={styles.displayLabel}>專案名稱:</Text>
+              <Text style={styles.displayName}>{item.name}</Text>
             </View>
-
-            <TouchableOpacity
-              style={styles.saveButton}
-              onPress={() => handleSaveProjectName(item.id)}
-            >
-              <Text style={styles.saveButtonText}>儲存</Text>
-            </TouchableOpacity>
-
-            {item.name ? (
-              <Text style={styles.savedName}>已儲存名稱: {item.name}</Text>
-            ) : null}
           </View>
         )}
       />
+
+      {/* 新增專案 Modal */}
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalBackground}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>新增專案</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="請輸入專案名稱"
+              value={newProjectName}
+              onChangeText={setNewProjectName}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButton} onPress={handleSaveNewProject}>
+                <Text style={styles.modalButtonText}>儲存</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={() => setModalVisible(false)}>
+                <Text style={styles.modalButtonText}>取消</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Layout>
   );
 }
@@ -179,45 +182,74 @@ const styles = StyleSheet.create({
     padding: 20,
     marginBottom: 20,
     borderRadius: 12,
-    position: 'relative',
-    minHeight: 140, // 方格高度增大
+    minHeight: 100,
+    justifyContent: 'center',
   },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  inputLabel: {
-    fontSize: 16,
+  projectName: {
+    fontSize: 18,
     fontWeight: '600',
-    marginRight: 10,
-    width: 90, // 固定寬度
-    textAlign: 'left',
   },
-  projectInput: {
+  // Modal 樣式
+  modalBackground: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '80%',
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'stretch',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  modalInput: {
     borderWidth: 1,
     borderColor: '#aaa',
     borderRadius: 8,
     padding: 10,
     fontSize: 16,
+    marginBottom: 20,
   },
-  saveButton: {
-    position: 'absolute',
-    right: 10,
-    bottom: 10,
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalButton: {
+    flex: 1,
     backgroundColor: '#28a745',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
+    paddingVertical: 10,
+    marginHorizontal: 5,
+    borderRadius: 8,
+    alignItems: 'center',
   },
-  saveButtonText: {
+  cancelButton: {
+    backgroundColor: '#FF3B30',
+  },
+  modalButtonText: {
     color: 'white',
     fontWeight: 'bold',
-  },
-  savedName: {
-    marginTop: 10,
     fontSize: 16,
-    fontWeight: '600',
   },
+  displayRow: {
+  flexDirection: 'row',
+  alignItems: 'center',
+},
+displayLabel: {
+  fontSize: 16,
+  fontWeight: '600',
+  marginRight: 2,
+  width: 70, // 固定寬度
+},
+displayName: {
+  fontSize: 16,
+  fontWeight: '500',
+  flex: 1,
+},
 });
