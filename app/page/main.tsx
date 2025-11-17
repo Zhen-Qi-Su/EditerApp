@@ -1,11 +1,19 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, FlatList, Modal, StyleSheet, Text, TextInput,
+  Alert, FlatList, Modal,
+  Pressable,
+  StyleSheet, Text, TextInput,
   TouchableOpacity, View
 } from "react-native";
-import { Customer, CustomerApiService } from "../api";
 import Layout from "../components/node/layout";
+
+interface Customer {
+  id: string;
+  name: string;
+}
 
 export default function Main() {
   const [nickname, setNickname] = useState<string | null>(null);
@@ -13,81 +21,107 @@ export default function Main() {
   const [Customers, setCustomers] = useState<Customer[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [newCustomerName, setnewCustomerName] = useState('');
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useRef<FlatList<Customer> | null>(null);
+  const router = useRouter();
 
+  // 初始讀取本地資料
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
-
       try {
-        //名稱
         const nickname = await AsyncStorage.getItem('nickname');
         setNickname(nickname);
 
-        //客戶
         const allCustomersJson = await AsyncStorage.getItem('allCustomers');
-        const allCustomers = JSON.parse(allCustomersJson ?? "[]");
+        const allCustomers: Customer[] = JSON.parse(allCustomersJson ?? "[]");
         setCustomers(allCustomers);
 
-        setLoading(false);
-
-        try {
-          const apiCustomers = await CustomerApiService.getApiCustomersGetAll();
-          setCustomers(apiCustomers);
-          await AsyncStorage.setItem('allCustomers', JSON.stringify(apiCustomers));
-        } catch (apiErr) {
-          console.warn("API 讀取失敗，使用本地資料", apiErr);
-        }
       } catch (err) {
         console.error("讀取本地資料失敗", err);
-        setLoading(false); // 出錯也關閉 loading
+      } finally {
+        setLoading(false);
       }
     };
-
     fetchData();
   }, []);
 
-  // 打開新增客戶視窗
+  // 每次頁面 focus 時重新載入本地專案
+  const loadFromStorage = async () => {
+    try {
+      const allCustomersJson = await AsyncStorage.getItem('allCustomers');
+      const allCustomers: Customer[] = JSON.parse(allCustomersJson ?? "[]");
+
+      const rawLocal = await AsyncStorage.getItem("localProjects");
+      const local: Customer[] = rawLocal ? JSON.parse(rawLocal) : [];
+
+      // 避免重複 id
+      const ids = new Set(allCustomers.map(c => c.id));
+      const merged = [...allCustomers, ...local.filter(c => !ids.has(c.id))];
+
+      setCustomers(merged);
+    } catch (e) {
+      console.error("Load from storage failed", e);
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadFromStorage();
+    }, [])
+  );
+
   const handleOpenModal = () => {
     setnewCustomerName('');
     setModalVisible(true);
   };
 
-  // 儲存並新增專案
   const handleSaveNewCustomer = async () => {
-    if (!newCustomerName.trim()) {
-      Alert.alert("請輸入專案名稱");
-      return;
-    }
-    setLoading(true);
-
     try {
+      const trimmedName = newCustomerName.trim();
+      if (!trimmedName) {
+        Alert.alert("請輸入專案名稱");
+        return;
+      }
+
       const newCustomer: Customer = {
-        name: newCustomerName.trim(),
+        id: `local-${Date.now()}`, // ✅ 唯一 id
+        name: trimmedName,
       };
-      const result = await CustomerApiService.postApiCustomersCreateCustomer(newCustomer);
 
-      // 更新客戶列表
-      setCustomers(prev => [...prev, result]);
+      // 更新 state
+      setCustomers(prev => {
+        const next = [...prev, newCustomer];
+        AsyncStorage.setItem('allCustomers', JSON.stringify(next)).catch(console.error);
+        return next;
+      });
 
-      // 關閉 modal
+      // 更新 localProjects
+      const raw = await AsyncStorage.getItem('localProjects');
+      const local: Customer[] = raw ? JSON.parse(raw) : [];
+      local.unshift(newCustomer);
+      await AsyncStorage.setItem('localProjects', JSON.stringify(local));
+
       setModalVisible(false);
 
-      // 延遲滾動到底
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
-
     } catch (err) {
       console.error("Create customer failed:", err);
-    } finally {
-      setLoading(false); // 不管成功或失敗都關閉 loading
+      Alert.alert("錯誤", "無法新增專案");
     }
   };
 
-  // TODO 要刪除的CODE 
-  // 清空客戶列表
-  const handleClearCustomers = () => setCustomers([]);
+  const handleClearCustomers = async () => {
+    try {
+      await AsyncStorage.removeItem('localProjects');
+      await AsyncStorage.removeItem('allCustomers');
+      setCustomers([]);
+      Alert.alert("成功", "所有專案已被清除");
+    } catch (error) {
+      Alert.alert("錯誤", "無法清除專案");
+    }
+  };
 
   if (loading) {
     return (
@@ -99,7 +133,6 @@ export default function Main() {
 
   return (
     <Layout>
-      {/* 頂部標題 + 按鈕 */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.addButton} onPress={handleOpenModal}>
           <Text style={styles.addButtonText}>新增</Text>
@@ -107,29 +140,38 @@ export default function Main() {
 
         <Text style={styles.title}>專案主頁</Text>
 
-        {/* TODO 要刪除的CODE  */}
         <TouchableOpacity style={styles.clearButton} onPress={handleClearCustomers}>
           <Text style={styles.clearButtonText}>清除</Text>
         </TouchableOpacity>
       </View>
 
-      {/* 專案方格列表 */}
       <FlatList
         ref={flatListRef}
         data={Customers}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item, index) => item.id ?? String(index)}
         contentContainerStyle={styles.customerList}
         renderItem={({ item }) => (
-          <View style={styles.customerBox}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.customerBox,
+              pressed && { backgroundColor: 'rgba(0, 122, 255, 0.6)' }, // 按下變深藍
+            ]}
+            onPress={() => {
+              if (!item.id) return;
+              router.push({
+                pathname: "/project/[id]",
+                params: { id: item.id, name: item.name },
+              });
+            }}
+          >
             <View style={styles.displayRow}>
               <Text style={styles.displayLabel}>專案名稱:</Text>
               <Text style={styles.displayName}>{item.name}</Text>
             </View>
-          </View>
+          </Pressable>
         )}
       />
 
-      {/* 新增專案 Modal */}
       <Modal
         visible={modalVisible}
         animationType="slide"
@@ -156,7 +198,7 @@ export default function Main() {
           </View>
         </View>
       </Modal>
-    </Layout>
+    </Layout >
   );
 }
 
@@ -194,7 +236,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
   },
-  // TODO 要刪除的CODE
   clearButton: {
     backgroundColor: '#FF3B30',
     width: 80,
@@ -203,7 +244,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // TODO 要刪除的CODE
   clearButtonText: {
     color: 'white',
     fontWeight: 'bold',
@@ -215,16 +255,27 @@ const styles = StyleSheet.create({
     paddingBottom: 50,
   },
   customerBox: {
-    backgroundColor: '#e6f0ff',
+    backgroundColor: 'rgba(149, 211, 255, 0.4)',
     padding: 20,
     marginBottom: 20,
     borderRadius: 12,
     minHeight: 100,
     justifyContent: 'center',
   },
-  projectName: {
-    fontSize: 18,
+  displayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  displayLabel: {
+    fontSize: 16,
     fontWeight: '600',
+    marginRight: 2,
+    width: 70,
+  },
+  displayName: {
+    fontSize: 16,
+    fontWeight: '500',
+    flex: 1,
   },
   // Modal 樣式
   modalBackground: {
@@ -273,20 +324,5 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
-  },
-  displayRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  displayLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginRight: 2,
-    width: 70,
-  },
-  displayName: {
-    fontSize: 16,
-    fontWeight: '500',
-    flex: 1,
   },
 });
